@@ -8,12 +8,10 @@ env/
 venv/
 .venv/
 *.db
-*.db-shm
-*.db-wal
 *.sqlite3
 .pytest_cache/
 
-# Node & Next.js
+# Node
 node_modules/
 .next/
 out/
