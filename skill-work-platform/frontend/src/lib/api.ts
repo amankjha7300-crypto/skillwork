@@ -1,7 +1,23 @@
 import { API_BASE_URL } from "./constants";
 import { getStoredToken } from "./auth";
+import { handleMockApiRequest } from "./mockApi";
+
+function shouldDirectlyUseMock(): boolean {
+  if (typeof window === "undefined") return false;
+  // If we are on HTTPS (e.g. Vercel) and the API base URL is an insecure HTTP URL (e.g. http://localhost:8000),
+  // modern browsers strictly block it with Mixed Active Content security errors.
+  if (window.location.protocol === "https:" && API_BASE_URL.startsWith("http://")) {
+    return true;
+  }
+  return false;
+}
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  // If running in HTTPS demo environment where localhost:8000 is blocked:
+  if (shouldDirectlyUseMock()) {
+    return handleMockApiRequest(endpoint, options);
+  }
+
   const token = getStoredToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -12,19 +28,31 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  try {
+    const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+      ...options,
+      headers,
+    });
 
-  const data = await res.json().catch(() => ({}));
+    const data = await res.json().catch(() => ({}));
 
-  if (!res.ok) {
-    const errorMsg = data.detail || "An unexpected error occurred. Please try again.";
-    throw new Error(errorMsg);
+    if (!res.ok) {
+      const errorMsg = data.detail || "An unexpected error occurred. Please try again.";
+      const error = new Error(errorMsg);
+      (error as any).isHttpError = true;
+      throw error;
+    }
+
+    return data as T;
+  } catch (err: any) {
+    if (err?.isHttpError) {
+      throw err;
+    }
+    // If backend is offline, unreachable, or fetch failed (e.g. "Failed to fetch"):
+    // Automatically fall back to the mock store so user flows are never blocked!
+    console.warn(`[SkillWork API] Network fetch failed (${err?.message || "unreachable"}). Activating in-browser mock engine for: ${endpoint}`);
+    return handleMockApiRequest(endpoint, options);
   }
-
-  return data as T;
 }
 
 export const api = {
